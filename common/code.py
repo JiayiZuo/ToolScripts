@@ -1,0 +1,4 @@
+SUCCESS = 00000
+
+# salary code
+SALARY_EMAIL_FAIL = 10001

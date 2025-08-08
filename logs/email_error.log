@@ -1,0 +1,9 @@
+2025-08-08 11:42:45,250 - ERROR - 加载模板失败: [Errno 2] No such file or directory: '/utils/salary_email.html'
+2025-08-08 11:46:28,224 - ERROR - [2ea5382e] 文件保存失败: 'str' object has no attribute 'save'
+2025-08-08 11:51:20,319 - ERROR - 读取Excel失败: [Errno 2] No such file or directory: 'C:\\Users\\zoe.zuo\\AppData\\Local\\Temp\\tmp4ojjzkrb\\data.xlsx'
+2025-08-08 11:51:20,319 - ERROR - [5500c4d5] 请求处理失败
+2025-08-08 11:52:17,055 - ERROR - 读取Excel失败: Missing optional dependency 'openpyxl'.  Use pip or conda to install openpyxl.
+2025-08-08 11:52:17,055 - ERROR - [82882022] 请求处理失败
+2025-08-08 11:53:27,202 - ERROR - 加载模板失败: [Errno 2] No such file or directory: '<html>\n<body>\n    <p>尊敬的{{姓名}}，您好！</p>\n    <p>请查收本月详情。</p>\n    <p><strong>明细1：</strong>{{明细1}}</p>\n    <p><strong>明细2：</strong>{{明细2}}</p>\n<!--    <p>点击<a href="https://example.com">查看详情</a></p>-->\n    <hr>\n    <p style="color:gray">本邮件由系统自动发送，请勿回复</p>\n</body>\n</html>'
+2025-08-08 11:53:27,202 - ERROR - [8f018fd9] 请求处理失败
+2025-08-08 12:09:23,205 - ERROR - 加载模板失败: name 'TEMPLATE_FILE' is not defined
