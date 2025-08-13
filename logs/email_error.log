@@ -7,3 +7,6 @@
 2025-08-08 11:53:27,202 - ERROR - 加载模板失败: [Errno 2] No such file or directory: '<html>\n<body>\n    <p>尊敬的{{姓名}}，您好！</p>\n    <p>请查收本月详情。</p>\n    <p><strong>明细1：</strong>{{明细1}}</p>\n    <p><strong>明细2：</strong>{{明细2}}</p>\n<!--    <p>点击<a href="https://example.com">查看详情</a></p>-->\n    <hr>\n    <p style="color:gray">本邮件由系统自动发送，请勿回复</p>\n</body>\n</html>'
 2025-08-08 11:53:27,202 - ERROR - [8f018fd9] 请求处理失败
 2025-08-08 12:09:23,205 - ERROR - 加载模板失败: name 'TEMPLATE_FILE' is not defined
+2025-08-13 13:32:56,017 - ERROR - [def17d26-8ca6-4f99-bc25-49cb2948d3d1] 缺少必要文件
+2025-08-13 13:34:02,822 - ERROR - [d593d938-6c07-4998-8841-10480a999d8c] 缺少必要文件
+2025-08-13 13:34:28,818 - ERROR - [37cbbd6a-9c03-40f9-a40e-f0c4a9b7cdd6] 缺少必要文件

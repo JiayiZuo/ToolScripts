@@ -1,3 +1,5 @@
+from wsgiref.util import request_uri
+
 import pandas as pd
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -31,12 +33,10 @@ def send_emails(excel_path):
     # 生成主题
     subject = SUBJECT_TEMPLATE.format(day, month, year)
 
-    # 读取Excel数据
-    try:
-        df = pd.read_excel(excel_path)
-    except Exception as e:
-        logger.error(f"读取Excel失败: {e}")
-        return False, str(e)
+    if not excel_path.filename.endswith(('.xlsx', '.xls')):
+        return False, "只支持Excel文件(.xlsx, .xls)"
+    excel_path.seek(0)
+    df = pd.read_excel(excel_path, engine='openpyxl')
 
     # 加载邮件模板
     try:
@@ -118,7 +118,7 @@ def handle_send_emails():
     request_id = str(uuid.uuid4())
 
     # 检查请求中是否有文件
-    if 'excel' not in request.files not in request.files:
+    if 'excel' not in request.files:
         logger.error(f"[{request_id}] 缺少必要文件")
         return jsonify({
             "status": "error",
