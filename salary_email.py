@@ -13,12 +13,12 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Image, Spacer
-from reportlab.lib.units import inch
+from reportlab.lib.units import inch, mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 import matplotlib.font_manager as fm
-from PyPDF2 import PdfReader, PdfWriter  # 添加PDF加密所需的库
+from PyPDF2 import PdfReader, PdfWriter
 
 # 尝试注册中文字体
 try:
@@ -32,9 +32,9 @@ try:
         pdfmetrics.registerFont(TTFont('ChineseFont', chinese_font_path))
         logger.info(f"使用中文字体: {chinese_fonts[0]}, 路径: {chinese_font_path}")
     else:
-        # 如果没有找到中文字体，尝试使用默认字体
-        pdfmetrics.registerFont(TTFont('ChineseFont', 'arial.ttf'))
-        logger.warning("未找到中文字体，使用默认字体")
+        # 如果没有找到中文字体，使用ReportLab内置的CID字体
+        pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+        logger.info("使用内置CID字体: STSong-Light")
 except Exception as e:
     logger.error(f"字体注册失败: {e}")
     # 如果所有尝试都失败，使用ReportLab内置的CID字体
@@ -51,8 +51,8 @@ SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 LOGO_PATH = os.getenv("LOGO_PATH", os.getcwd() + "/utils/logo.png")  # 公司LOGO路径
 TEMPLATE_FILE = os.getcwd() + "/utils/salary_email.html"
-SUBJECT_TEMPLATE = "{}/{}/{}明细"
-PDF_PASSWORD = os.getenv("PDF_PASSWORD", "123456")  # 添加PDF密码环境变量
+SUBJECT_TEMPLATE = "{}/{}/{}薪酬明细"
+PDF_PASSWORD = os.getenv("PDF_PASSWORD", "123456")  # PDF打开密码
 
 
 def read_excel_data(excel_file):
@@ -81,6 +81,7 @@ def read_excel_data(excel_file):
 
 
 def encrypt_pdf(input_path, output_path, password):
+    """加密PDF文件"""
     try:
         with open(input_path, "rb") as input_file:
             pdf_reader = PdfReader(input_file)
@@ -103,70 +104,156 @@ def encrypt_pdf(input_path, output_path, password):
         return False
 
 
-def create_pdf(dataframe, pdf_path, logo_path):
+def create_bank_style_pdf(dataframe, pdf_path, logo_path, recipient_name=None):
+    """
+    创建银行月结单风格的PDF文件
+    """
     try:
-        # 创建PDF文档
-        doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+        # 创建PDF文档 - 调整页边距
+        doc = SimpleDocTemplate(
+            pdf_path,
+            pagesize=A4,
+            leftMargin=20 * mm,
+            rightMargin=20 * mm,
+            topMargin=15 * mm,
+            bottomMargin=15 * mm
+        )
+
+        # 准备内容
         elements = []
 
-        # 添加公司LOGO
+        # 添加公司LOGO和标题
         if os.path.exists(logo_path):
-            logo = Image(logo_path, width=2 * inch, height=1 * inch)
+            logo = Image(logo_path, width=2.5 * inch, height=1 * inch)
             logo.hAlign = 'CENTER'
             elements.append(logo)
-            elements.append(Spacer(1, 0.2 * inch))
+            elements.append(Spacer(1, 0.1 * inch))
 
-        # 添加标题 - 使用中文字体
+        # 添加标题
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
             'CustomTitle',
             parent=styles['Heading1'],
             fontName='ChineseFont',
-            fontSize=16,
-            spaceAfter=30,
+            fontSize=18,
+            textColor=colors.HexColor("#1a5276"),  # 深蓝色
+            spaceAfter=20,
             alignment=1  # 居中
         )
-        title = Paragraph("员工薪酬明细表", title_style)
+        title = Paragraph("薪酬明细月结单", title_style)
         elements.append(title)
-        elements.append(Spacer(1, 0.2 * inch))
+
+        # 添加日期和接收人信息
+        today = datetime.now()
+        date_str = f"{today.year}年{today.month}月{today.day}日"
+
+        date_style = ParagraphStyle(
+            'DateStyle',
+            parent=styles['Normal'],
+            fontName='ChineseFont',
+            fontSize=12,
+            textColor=colors.HexColor("#7f8c8d"),  # 灰色
+            alignment=1,
+            spaceAfter=15
+        )
+        date_para = Paragraph(date_str, date_style)
+        elements.append(date_para)
+
+        if recipient_name:
+            recipient_style = ParagraphStyle(
+                'RecipientStyle',
+                parent=styles['Normal'],
+                fontName='ChineseFont',
+                fontSize=12,
+                textColor=colors.HexColor("#7f8c8d"),
+                alignment=1,
+                spaceAfter=20
+            )
+            recipient_para = Paragraph(f"尊敬的 {recipient_name} 先生/女士", recipient_style)
+            elements.append(recipient_para)
+
+        # 添加说明文字
+        note_style = ParagraphStyle(
+            'NoteStyle',
+            parent=styles['Normal'],
+            fontName='ChineseFont',
+            fontSize=10,
+            textColor=colors.HexColor("#7f8c8d"),
+            alignment=0,
+            spaceAfter=20
+        )
+        note_text = "以下是您的本月薪酬明细，请查收。如有疑问，请及时与人力资源部门联系。"
+        note_para = Paragraph(note_text, note_style)
+        elements.append(note_para)
 
         # 准备表格数据
-        table_data = [['组成部分', '金额(元)']]  # 表头
-
-        # 添加数据行
         row = dataframe.iloc[0]  # 获取第一行数据
-        table_data.append(['基本薪金', f"{row['基本薪金']:.2f}"])
-        table_data.append(['TR FEE', f"{row['TR_FEE']:.2f}"])
-        table_data.append(['月度奖金', f"{row['月度奖金']:.2f}"])
-        table_data.append(['佣金', f"{row['佣金']:.2f}"])
-        table_data.append(['其他', f"{row['其他']:.2f}"])
-        table_data.append(['MPF', f"{row['MPF']:.2f}"])
-        table_data.append(['总共', f"{row['总共']:.2f}"])
+
+        # 创建银行风格的表格
+        table_data = [
+            ['项目', '金额 (港元)'],
+            ['基本薪金', f"HK$ {row['基本薪金']:,.2f}"],
+            ['TR FEE', f"HK$ {row['TR_FEE']:,.2f}"],
+            ['月度奖金', f"HK$ {row['月度奖金']:,.2f}"],
+            ['佣金', f"HK$ {row['佣金']:,.2f}"],
+            ['其他', f"HK$ {row['其他']:,.2f}"],
+            ['MPF', f"HK$ {row['MPF']:,.2f}"],
+            ['总计', f"HK$ {row['总共']:,.2f}"]
+        ]
 
         # 创建表格
-        table = Table(table_data, colWidths=[2.5 * inch, 2.5 * inch])
+        table = Table(table_data, colWidths=[3 * inch, 2.5 * inch])
 
-        # 设置表格样式 - 使用中文字体
+        # 设置表格样式 - 银行风格
         table_style = TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            # 表头样式
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2e86c1")),  # 蓝色背景
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'ChineseFont'),
             ('FONTSIZE', (0, 0), (-1, 0), 14),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('FONTNAME', (0, 1), (-1, -1), 'ChineseFont'),
-            ('FONTSIZE', (0, 1), (-1, -1), 12),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ])
 
-        # 为总计行添加特殊样式
-        table_style.add('BACKGROUND', (0, len(table_data) - 1), (-1, len(table_data) - 1), colors.lightgrey)
-        table_style.add('FONTSIZE', (0, len(table_data) - 1), (-1, len(table_data) - 1), 14)
-        table_style.add('FONTNAME', (0, len(table_data) - 1), (-1, len(table_data) - 1), 'ChineseFont')
+            # 数据行样式
+            ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor("#ebf5fb")),  # 浅蓝色背景
+            ('FONTNAME', (0, 1), (-1, -2), 'ChineseFont'),
+            ('FONTSIZE', (0, 1), (-1, -2), 12),
+            ('TEXTCOLOR', (0, 1), (-1, -2), colors.HexColor("#2c3e50")),  # 深灰色文字
+            ('ALIGN', (0, 1), (0, -2), 'LEFT'),
+            ('ALIGN', (1, 1), (1, -2), 'RIGHT'),
+
+            # 网格线
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#d6eaf8")),  # 浅蓝色网格线
+
+            # 总计行样式
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#f9e79f")),  # 浅黄色背景
+            ('FONTNAME', (0, -1), (-1, -1), 'ChineseFont'),
+            ('FONTSIZE', (0, -1), (-1, -1), 14),
+            ('TEXTCOLOR', (0, -1), (-1, -1), colors.HexColor("#7d6608")),  # 深黄色文字
+            ('ALIGN', (0, -1), (0, -1), 'LEFT'),
+            ('ALIGN', (1, -1), (1, -1), 'RIGHT'),
+            ('LINEABOVE', (0, -1), (-1, -1), 2, colors.HexColor("#f1c40f")),  # 黄色上边框
+        ])
 
         table.setStyle(table_style)
         elements.append(table)
+
+        # 添加底部说明
+        elements.append(Spacer(1, 0.3 * inch))
+
+        footer_style = ParagraphStyle(
+            'FooterStyle',
+            parent=styles['Normal'],
+            fontName='ChineseFont',
+            fontSize=9,
+            textColor=colors.HexColor("#7f8c8d"),
+            alignment=1,
+            spaceBefore=20
+        )
+
+        footer_text = "本文件包含机密信息，仅供指定收件人使用。未经授权披露、复制或分发本文件内容是被严格禁止的。"
+        footer_para = Paragraph(footer_text, footer_style)
+        elements.append(footer_para)
 
         # 生成PDF
         doc.build(elements)
@@ -185,7 +272,7 @@ def send_emails(excel_path):
     year = today.year
 
     # 生成主题
-    subject = SUBJECT_TEMPLATE.format(day, month, year)
+    subject = SUBJECT_TEMPLATE.format(year, month, day)
 
     if not excel_path.filename.endswith(('.xlsx', '.xls')):
         return False, "只支持Excel文件(.xlsx, .xls)"
@@ -225,7 +312,8 @@ def send_emails(excel_path):
                 unencrypted_pdf_path = tmp_file.name
 
             # 为当前行创建PDF
-            pdf_created = create_pdf(pd.DataFrame([row]), unencrypted_pdf_path, LOGO_PATH)
+            recipient_name = row.get('姓名', '')
+            pdf_created = create_bank_style_pdf(pd.DataFrame([row]), unencrypted_pdf_path, LOGO_PATH, recipient_name)
             if not pdf_created:
                 raise ValueError("生成PDF文件失败")
 
@@ -255,7 +343,7 @@ def send_emails(excel_path):
             # 添加PDF附件
             with open(encrypted_pdf_path, "rb") as f:
                 attach = MIMEApplication(f.read(), _subtype="pdf")
-            attach.add_header('Content-Disposition', 'attachment', filename=f"薪酬明细_{day}{month}{year}.pdf")
+            attach.add_header('Content-Disposition', 'attachment', filename=f"{year}年{month}月薪酬明细.pdf")
             msg.attach(attach)
 
             # 发送邮件
