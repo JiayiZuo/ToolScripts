@@ -1,15 +1,46 @@
-from wsgiref.util import request_uri
-
 import pandas as pd
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
 from datetime import datetime
-import os, uuid
+import os, uuid, tempfile
 from log_config import logger
 from flask import Blueprint, request, jsonify
 from dotenv import load_dotenv
 from common import code, message
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Image, Spacer
+from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+# 尝试注册中文字体
+try:
+    # 查找系统中可用的中文字体
+    chinese_fonts = [f.name for f in fm.fontManager.ttflist if any(
+        word in f.name.lower() for word in ['chinese', 'china', 'simhei', 'simsun', 'msyh', 'pingfang'])]
+
+    if chinese_fonts:
+        # 使用第一个找到的中文字体
+        chinese_font_path = fm.findfont(fm.FontProperties(family=chinese_fonts[0]))
+        pdfmetrics.registerFont(TTFont('ChineseFont', chinese_font_path))
+        logger.info(f"使用中文字体: {chinese_fonts[0]}, 路径: {chinese_font_path}")
+    else:
+        # 如果没有找到中文字体，尝试使用默认字体
+        pdfmetrics.registerFont(TTFont('ChineseFont', 'arial.ttf'))
+        logger.warning("未找到中文字体，使用默认字体")
+except Exception as e:
+    logger.error(f"字体注册失败: {e}")
+    # 如果所有尝试都失败，使用ReportLab内置的CID字体
+    pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+    logger.info("使用内置CID字体: STSong-Light")
 
 email_bp = Blueprint('email_api', __name__, url_prefix='/api/email')
 load_dotenv()
@@ -19,8 +50,111 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.163.com")  # 默认值
 SMTP_PORT = int(os.getenv("SMTP_PORT", 465))  # 转换为整数
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
+LOGO_PATH = os.getenv("LOGO_PATH", os.getcwd() + "/utils/logo.png")  # 公司LOGO路径
 TEMPLATE_FILE = os.getcwd() + "/utils/salary_email.html"
 SUBJECT_TEMPLATE = "{}/{}/{}明细"
+
+
+def read_excel_data(excel_file):
+    """
+    从Excel文件读取指定字段的数据并格式化
+    """
+    try:
+        # 读取Excel文件
+        excel_file.seek(0)
+        df = pd.read_excel(excel_file, engine='openpyxl')
+
+        # 确保所需的列存在
+        required_columns = ['基本薪金', 'TR_FEE', '月度奖金', '佣金', '其他', 'MPF', '总共']
+        for col in required_columns:
+            if col not in df.columns:
+                raise ValueError(f"Excel文件中缺少必要的列: {col}")
+
+        # 格式化数据为两位小数
+        for col in required_columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).round(2)
+
+        return df
+    except Exception as e:
+        logger.error(f"读取Excel文件时出错: {e}")
+        return None
+
+
+def create_pdf(dataframe, pdf_path, logo_path):
+    """
+    创建带有公司LOGO和数据的PDF文件
+    """
+    try:
+        # 创建PDF文档
+        doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+        elements = []
+
+        # 添加公司LOGO
+        if os.path.exists(logo_path):
+            logo = Image(logo_path, width=2 * inch, height=1 * inch)
+            logo.hAlign = 'CENTER'
+            elements.append(logo)
+            elements.append(Spacer(1, 0.2 * inch))
+
+        # 添加标题 - 使用中文字体
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontName='ChineseFont',
+            fontSize=16,
+            spaceAfter=30,
+            alignment=1  # 居中
+        )
+        title = Paragraph("员工薪酬明细表", title_style)
+        elements.append(title)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        # 准备表格数据
+        table_data = [['组成部分', '金额(元)']]  # 表头
+
+        # 添加数据行
+        row = dataframe.iloc[0]  # 获取第一行数据
+        table_data.append(['基本薪金', f"{row['基本薪金']:.2f}"])
+        table_data.append(['TR FEE', f"{row['TR_FEE']:.2f}"])
+        table_data.append(['月度奖金', f"{row['月度奖金']:.2f}"])
+        table_data.append(['佣金', f"{row['佣金']:.2f}"])
+        table_data.append(['其他', f"{row['其他']:.2f}"])
+        table_data.append(['MPF', f"{row['MPF']:.2f}"])
+        table_data.append(['总共', f"{row['总共']:.2f}"])
+
+        # 创建表格
+        table = Table(table_data, colWidths=[2.5 * inch, 2.5 * inch])
+
+        # 设置表格样式 - 使用中文字体
+        table_style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'ChineseFont'),
+            ('FONTSIZE', (0, 0), (-1, 0), 14),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('FONTNAME', (0, 1), (-1, -1), 'ChineseFont'),
+            ('FONTSIZE', (0, 1), (-1, -1), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ])
+
+        # 为总计行添加特殊样式
+        table_style.add('BACKGROUND', (0, len(table_data) - 1), (-1, len(table_data) - 1), colors.lightgrey)
+        table_style.add('FONTSIZE', (0, len(table_data) - 1), (-1, len(table_data) - 1), 14)
+        table_style.add('FONTNAME', (0, len(table_data) - 1), (-1, len(table_data) - 1), 'ChineseFont')
+
+        table.setStyle(table_style)
+        elements.append(table)
+
+        # 生成PDF
+        doc.build(elements)
+        logger.info(f"PDF文件已生成: {pdf_path}")
+        return True
+    except Exception as e:
+        logger.error(f"生成PDF文件时出错: {e}")
+        return False
 
 
 def send_emails(excel_path):
@@ -35,8 +169,11 @@ def send_emails(excel_path):
 
     if not excel_path.filename.endswith(('.xlsx', '.xls')):
         return False, "只支持Excel文件(.xlsx, .xls)"
-    excel_path.seek(0)
-    df = pd.read_excel(excel_path, engine='openpyxl')
+
+    # 读取Excel数据
+    df = read_excel_data(excel_path)
+    if df is None:
+        return False, "读取Excel数据失败"
 
     # 加载邮件模板
     try:
@@ -63,25 +200,38 @@ def send_emails(excel_path):
             if '邮箱' not in row or not row['邮箱']:
                 raise ValueError("缺少邮箱地址")
 
-            # 生成个性化邮件内容
-            personalized_content = template
-            for col in df.columns:
-                placeholder = f"{{{{{col}}}}}"
-                personalized_content = personalized_content.replace(placeholder, str(row[col]))
+            # 创建临时PDF文件
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+                pdf_path = tmp_file.name
+
+            # 为当前行创建PDF
+            pdf_created = create_pdf(pd.DataFrame([row]), pdf_path, LOGO_PATH)
+            if not pdf_created:
+                raise ValueError("生成PDF文件失败")
 
             # 创建邮件对象
             msg = MIMEMultipart()
             msg['From'] = SENDER_EMAIL
             msg['To'] = row['邮箱']
             msg['Subject'] = subject
-            msg.attach(MIMEText(personalized_content, "html"))
+            msg.attach(MIMEText(template, "html"))
+
+            # 添加PDF附件
+            with open(pdf_path, "rb") as f:
+                attach = MIMEApplication(f.read(), _subtype="pdf")
+            attach.add_header('Content-Disposition', 'attachment', filename=f"薪酬明细_{day}{month}{year}.pdf")
+            msg.attach(attach)
 
             # 发送邮件
             server.sendmail(SENDER_EMAIL, [row['邮箱']], msg.as_string())
 
+            # 删除临时文件
+            os.unlink(pdf_path)
+
             # 记录成功
             recipient_info = f"{row.get('姓名', '未知')} <{row['邮箱']}>"
             success_count += 1
+            logger.info(f"邮件发送成功: {recipient_info}")
         except Exception as e:
             # 记录错误
             error_msg = f"发送给 {row.get('姓名', '未知')} 失败: {str(e)}"
@@ -91,6 +241,13 @@ def send_emails(excel_path):
                 "email": row.get('邮箱', '无邮箱'),
                 "error": str(e)
             })
+
+            # 确保临时文件被删除
+            if 'pdf_path' in locals() and os.path.exists(pdf_path):
+                try:
+                    os.unlink(pdf_path)
+                except:
+                    pass
 
     # 关闭SMTP连接
     server.quit()
@@ -112,6 +269,7 @@ def send_emails(excel_path):
 
     return True, result
 
+
 @email_bp.route('/send-salary-emails', methods=['POST'])
 def handle_send_emails():
     # 生成唯一ID用于日志跟踪
@@ -122,7 +280,7 @@ def handle_send_emails():
         logger.error(f"[{request_id}] 缺少必要文件")
         return jsonify({
             "status": "error",
-            "message": "请提供excel和template文件"
+            "message": "请提供excel文件"
         }), 400
 
     excel_file = request.files['excel']
