@@ -16,10 +16,9 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+from PyPDF2 import PdfReader, PdfWriter  # 添加PDF加密所需的库
 
 # 尝试注册中文字体
 try:
@@ -53,6 +52,7 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 LOGO_PATH = os.getenv("LOGO_PATH", os.getcwd() + "/utils/logo.png")  # 公司LOGO路径
 TEMPLATE_FILE = os.getcwd() + "/utils/salary_email.html"
 SUBJECT_TEMPLATE = "{}/{}/{}明细"
+PDF_PASSWORD = os.getenv("PDF_PASSWORD", "123456")  # 添加PDF密码环境变量
 
 
 def read_excel_data(excel_file):
@@ -80,10 +80,30 @@ def read_excel_data(excel_file):
         return None
 
 
+def encrypt_pdf(input_path, output_path, password):
+    try:
+        with open(input_path, "rb") as input_file:
+            pdf_reader = PdfReader(input_file)
+            pdf_writer = PdfWriter()
+
+            # 复制所有页面
+            for page in pdf_reader.pages:
+                pdf_writer.add_page(page)
+
+            # 加密PDF
+            pdf_writer.encrypt(password)
+
+            # 保存加密后的PDF
+            with open(output_path, "wb") as output_file:
+                pdf_writer.write(output_file)
+
+        return True
+    except Exception as e:
+        logger.error(f"加密PDF失败: {e}")
+        return False
+
+
 def create_pdf(dataframe, pdf_path, logo_path):
-    """
-    创建带有公司LOGO和数据的PDF文件
-    """
     try:
         # 创建PDF文档
         doc = SimpleDocTemplate(pdf_path, pagesize=A4)
@@ -200,14 +220,30 @@ def send_emails(excel_path):
             if '邮箱' not in row or not row['邮箱']:
                 raise ValueError("缺少邮箱地址")
 
-            # 创建临时PDF文件
+            # 创建临时PDF文件（未加密）
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
-                pdf_path = tmp_file.name
+                unencrypted_pdf_path = tmp_file.name
 
             # 为当前行创建PDF
-            pdf_created = create_pdf(pd.DataFrame([row]), pdf_path, LOGO_PATH)
+            pdf_created = create_pdf(pd.DataFrame([row]), unencrypted_pdf_path, LOGO_PATH)
             if not pdf_created:
                 raise ValueError("生成PDF文件失败")
+
+            # 创建加密的PDF文件
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+                encrypted_pdf_path = tmp_file.name
+
+            # 加密PDF
+            encrypt_success = encrypt_pdf(unencrypted_pdf_path, encrypted_pdf_path, PDF_PASSWORD)
+            if not encrypt_success:
+                raise ValueError("加密PDF文件失败")
+
+            # 删除未加密的临时文件
+            os.unlink(unencrypted_pdf_path)
+
+            # 添加PDF密码提示
+            password_note = f"<p><strong>请注意：</strong>PDF附件已加密，打开密码为：{PDF_PASSWORD}</p>"
+            template = template.replace("</body>", f"{password_note}</body>")
 
             # 创建邮件对象
             msg = MIMEMultipart()
@@ -217,7 +253,7 @@ def send_emails(excel_path):
             msg.attach(MIMEText(template, "html"))
 
             # 添加PDF附件
-            with open(pdf_path, "rb") as f:
+            with open(encrypted_pdf_path, "rb") as f:
                 attach = MIMEApplication(f.read(), _subtype="pdf")
             attach.add_header('Content-Disposition', 'attachment', filename=f"薪酬明细_{day}{month}{year}.pdf")
             msg.attach(attach)
@@ -226,7 +262,7 @@ def send_emails(excel_path):
             server.sendmail(SENDER_EMAIL, [row['邮箱']], msg.as_string())
 
             # 删除临时文件
-            os.unlink(pdf_path)
+            os.unlink(encrypted_pdf_path)
 
             # 记录成功
             recipient_info = f"{row.get('姓名', '未知')} <{row['邮箱']}>"
@@ -243,11 +279,12 @@ def send_emails(excel_path):
             })
 
             # 确保临时文件被删除
-            if 'pdf_path' in locals() and os.path.exists(pdf_path):
-                try:
-                    os.unlink(pdf_path)
-                except:
-                    pass
+            for path_var in ['unencrypted_pdf_path', 'encrypted_pdf_path']:
+                if path_var in locals() and os.path.exists(locals()[path_var]):
+                    try:
+                        os.unlink(locals()[path_var])
+                    except:
+                        pass
 
     # 关闭SMTP连接
     server.quit()
