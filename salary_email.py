@@ -5,6 +5,8 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from datetime import datetime
 import os, uuid, tempfile
+
+from common.function import generate_password, check_email_name
 from log_config import logger
 from flask import Blueprint, request, jsonify
 from dotenv import load_dotenv
@@ -52,8 +54,6 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 LOGO_PATH = os.getenv("LOGO_PATH", os.getcwd() + "/utils/logo.png")  # 公司LOGO路径
 TEMPLATE_FILE = os.getcwd() + "/utils/salary_email.html"
 SUBJECT_TEMPLATE = "{}/{}/{}薪酬明细"
-PDF_PASSWORD = os.getenv("PDF_PASSWORD", "123456")  # PDF打开密码
-
 
 def read_excel_data(excel_file):
     """
@@ -105,9 +105,6 @@ def encrypt_pdf(input_path, output_path, password):
 
 
 def create_bank_style_pdf(dataframe, pdf_path, logo_path, recipient_name=None):
-    """
-    创建银行月结单风格的PDF文件
-    """
     try:
         # 创建PDF文档 - 调整页边距
         doc = SimpleDocTemplate(
@@ -233,6 +230,8 @@ def create_bank_style_pdf(dataframe, pdf_path, logo_path, recipient_name=None):
             ('ALIGN', (0, -1), (0, -1), 'LEFT'),
             ('ALIGN', (1, -1), (1, -1), 'RIGHT'),
             ('LINEABOVE', (0, -1), (-1, -1), 2, colors.HexColor("#f1c40f")),  # 黄色上边框
+            ('TOPPADDING', (0, -1), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, -1), (-1, -1), 9),
         ])
 
         table.setStyle(table_style)
@@ -300,19 +299,33 @@ def send_emails(excel_path):
 
     # 发送邮件
     success_count = 0
+    check_count = 0
     error_details = []
+    check_details = []
     for index, row in df.iterrows():
         try:
+            email = row['邮箱']
             # 检查必要字段
-            if '邮箱' not in row or not row['邮箱']:
+            if '邮箱' not in row or not email:
                 raise ValueError("缺少邮箱地址")
 
             # 创建临时PDF文件（未加密）
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
                 unencrypted_pdf_path = tmp_file.name
 
-            # 为当前行创建PDF
             recipient_name = row.get('姓名', '')
+
+            # 校验当前姓名和邮箱是否存在不匹配风险 如有不进行本次发送
+            if recipient_name and not check_email_name(recipient_name, email):
+                check_details.append({
+                    "recipient": recipient_name,
+                    "email": email,
+                    "msg": "当前收件人和邮箱疑似不匹配，请手动检查该条信息"
+                })
+                check_count += 1
+                continue
+
+            # 为当前行创建PDF
             pdf_created = create_bank_style_pdf(pd.DataFrame([row]), unencrypted_pdf_path, LOGO_PATH, recipient_name)
             if not pdf_created:
                 raise ValueError("生成PDF文件失败")
@@ -322,23 +335,23 @@ def send_emails(excel_path):
                 encrypted_pdf_path = tmp_file.name
 
             # 加密PDF
-            encrypt_success = encrypt_pdf(unencrypted_pdf_path, encrypted_pdf_path, PDF_PASSWORD)
-            if not encrypt_success:
-                raise ValueError("加密PDF文件失败")
+            current_pwd = generate_password()
+            encrypt_success = encrypt_pdf(unencrypted_pdf_path, encrypted_pdf_path, current_pwd)
 
             # 删除未加密的临时文件
             os.unlink(unencrypted_pdf_path)
 
             # 添加PDF密码提示
-            password_note = f"<p><strong>请注意：</strong>PDF附件已加密，打开密码为：{PDF_PASSWORD}</p>"
-            template = template.replace("</body>", f"{password_note}</body>")
+            current_template = template
+            password_note = f"<p><strong>请注意：</strong>PDF附件已加密，打开密码为：{current_pwd}</p>"
+            current_template = current_template.replace("</body>", f"{password_note}</body>")
 
             # 创建邮件对象
             msg = MIMEMultipart()
             msg['From'] = SENDER_EMAIL
             msg['To'] = row['邮箱']
             msg['Subject'] = subject
-            msg.attach(MIMEText(template, "html"))
+            msg.attach(MIMEText(current_template, "html"))
 
             # 添加PDF附件
             with open(encrypted_pdf_path, "rb") as f:
@@ -382,15 +395,17 @@ def send_emails(excel_path):
     result = {
         "success": success_count,
         "total": total,
-        "error_count": total - success_count,
+        "error_count": total - success_count - check_count,
         "error_details": error_details,
+        "check_count": check_count,
+        "check_details": check_details,
         "subject": subject
     }
 
     if success_count == total:
         logger.info(f"所有邮件发送成功! 总计: {success_count}封")
     else:
-        logger.warning(f"邮件发送完成! 成功: {success_count}/{total} 封")
+        logger.warning(f"邮件发送完成! 成功: {success_count}/{total} 封, {total - success_count - check_count}封发送失败, {check_count}封疑似收件人姓名和邮箱不匹配请检查后手动发送")
 
     return True, result
 

@@ -43,3 +43,5 @@
 2025-08-27 17:29:22,502 - ERROR - 发送给 未知 失败: 生成PDF文件失败
 2025-08-27 17:30:01,002 - ERROR - 生成PDF文件时出错: 'ChineseFont-Bold'
 2025-08-27 17:30:01,002 - ERROR - 发送给 未知 失败: 生成PDF文件失败
+2025-08-28 10:55:15,912 - ERROR - 加密PDF失败: user_password may not be None
+2025-08-28 10:55:16,225 - ERROR - 加密PDF失败: user_password may not be None
